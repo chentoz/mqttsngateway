@@ -11,9 +11,7 @@ import (
 	"strings"
 	"time"
 
-	HB "github.com/chentoz/mqttsngateway/HeartBeat"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
-	"google.golang.org/protobuf/proto"
 )
 
 func random(min, max int) int {
@@ -46,8 +44,8 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, macStr2Addr
 
 		fmt.Println(" ++++++++++ HeartBeat Ack ++++++++++ ")
 		fmt.Println("Heart Beat Ack got")
-		hb := &HB.HeartBeat{}
-		proto.Unmarshal(msg.Payload(), hb)
+		//hb := &HB.HeartBeat{}
+		//proto.Unmarshal(msg.Payload(), hb)
 
 		msgTypeByte := byte(0x0c)
 		flagByte := byte(0x62)
