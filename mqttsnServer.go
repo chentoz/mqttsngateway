@@ -1,9 +1,9 @@
 package main
 
 import (
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"math/rand"
 	"net"
 	"os"
@@ -20,30 +20,68 @@ func random(min, max int) int {
 	return rand.Intn(max-min) + min
 }
 
-func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}) {
+type m2a struct{
+	mac string
+	addr *net.UDPAddr
+}
+
+func updateMacMap(macStr2Addr map[string]*net.UDPAddr, update chan *m2a) {
+	for {
+		ud := <- update
+		fmt.Println("-------------------- updateMacMap --------------------")
+		fmt.Println(ud.mac)
+		fmt.Println(ud.addr)
+		macStr2Addr[ud.mac] = ud.addr
+		fmt.Println("-------------------- updateMacMap : End--------------------")
+	}
+}
+
+func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, macStr2Addr *map[string]*net.UDPAddr, update chan *m2a) {
 
 	buffer := make([]byte, 1024)
 	n, remoteAddr, err := 0, new(net.UDPAddr), error(nil)
-	MacStr2Addr := make(map[string]net.UDPAddr)
 
 	// mqtt client for workers
 	var hdrHeartBeat mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message) {
 
+		fmt.Println(" ++++++++++ HeartBeat Ack ++++++++++ ")
+		fmt.Println("Heart Beat Ack got")
 		hb := &HB.HeartBeat{}
-		proto.Unmarshal(msg.Payload(), bleLocation)
+		proto.Unmarshal(msg.Payload(), hb)
 
-		length := len(bleLocation.Id)
-		fmt.Printf("Get : %v \n", string(bleLocation.Id[:length]))
+		msgTypeByte := byte(0x0c)
+		flagByte := byte(0x62)
+		tidBytes := make([]byte, 2)
+		tidBytes[0] = byte('H')
+		tidBytes[1] = byte('B')
+		midBytes := make([]byte, 2)
+		binary.BigEndian.PutUint16(midBytes, 0x0b00)
+		lenByte := byte(1 + 1 + 1 + 2 + 2 + binary.Size(msg.Payload()))
 
-		_, err = connection.WriteToUDP(buffer[0:n], remoteAddr)
+		packet := make([]byte, lenByte)
+		(packet)[0] = lenByte
+		(packet)[1] = msgTypeByte
+		(packet)[2] = flagByte
+		copy((packet)[3:5], tidBytes)
+		copy((packet)[5:7], midBytes)
+		copy((packet)[7:], msg.Payload())
+
+		macstring := hex.EncodeToString(msg.Payload()[2 : 2+6])
+		fmt.Printf("Mac String %v\n", macstring)
+		udpAddr := (*macStr2Addr)[macstring]
+		fmt.Printf("Udp addr %+v\n", udpAddr)
+
+		_, err = connection.WriteToUDP(buffer[0:n], udpAddr)
+		fmt.Println("Sending back HeartBeat Ack")
 		if err != nil {
-			fmt.Printf("Error when re-sending : %v \n", strings(err))
-			quit <- struct{}{}
+			fmt.Printf("Error when re-sending : %v \n", err.Error())
+			//quit <- struct{}{}
 		}
+		fmt.Println(" ++++++++++ HeartBeat Ack ++++++++++ ")
 	}
 
 	opts := mqtt.NewClientOptions().
-		AddBroker("tcp://localhost:31337").
+		AddBroker("tcp://localhost:43518").
 		SetClientID(fmt.Sprintf("mqtt-benchmark-%v-%v", time.Now().Format(time.RFC3339Nano), "MQTTSN-Gateway-worker")).
 		SetCleanSession(true).
 		SetAutoReconnect(true).
@@ -52,24 +90,28 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}) {
 				fmt.Println(token.Error())
 				quit <- struct{}{}
 			} else {
-				fmt.Print("Subscribe topic " + "HeartBeat" + " success\n")
+				fmt.Println("Subscribe topic " + "HeartBeatAck" + " success\n")
 			}
 
 		}).
 		SetConnectionLostHandler(func(client mqtt.Client, reason error) {
-			log.Printf("CLIENT %v lost connection to the broker: %v. Will reconnect...\n", "MQTTSN-Gateway", reason.Error())
+			fmt.Printf("CLIENT %v lost connection to the broker: %v. Will reconnect...\n", "MQTTSN-Gateway", reason.Error())
 		})
 	client := mqtt.NewClient(opts)
 
 	token := client.Connect()
 	token.Wait()
 	if token.Error() != nil {
-		log.Printf("CLIENT %v had error connecting to the broker: %v\n", "MQTTSN-Gateway", token.Error())
+		fmt.Printf("CLIENT %v had error connecting to the broker: %v\n", "MQTTSN-Gateway", token.Error())
 		quit <- struct{}{}
 	}
 
 	for err == nil {
-		n, remoteAddr, err := connection.ReadFromUDP(buffer)
+		fmt.Println(" ++++++++++ Receiving HeartBeat Ack ++++++++++ ")
+
+		n, remoteAddr, err = connection.ReadFromUDP(buffer)
+
+		fmt.Printf("New message got")
 
 		var topic string
 		if buffer[3] == 0x42 {
@@ -90,12 +132,22 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}) {
 
 		mqttsnMessage := buffer[7:n]
 		macstring := hex.EncodeToString(mqttsnMessage[2 : 2+6])
-		MacStr2Addr[macstring] = remoteAddr
 
+		fmt.Println("Updating mac address and remote map : \n ")
+		fmt.Println(macstring)
+		fmt.Println(remoteAddr)
+
+		update <- &m2a{macstring, remoteAddr}
+		fmt.Println("Updated mac address and remote map : \n ")
+
+		fmt.Println("Redirecting messages : \n ")
 		token := client.Publish(topic, 0, false, mqttsnMessage)
 		if token.Error() != nil {
 			fmt.Println("CLIENT Error sending message")
 		}
+		fmt.Println("Messages redirected : \n ")
+
+		fmt.Println(" ++++++++++ Receiving HeartBeat Ack : End ++++++++++ ")
 	}
 }
 
@@ -123,9 +175,14 @@ func main() {
 
 	defer connection.Close()
 
+	macStr2Addr := make(map[string]*net.UDPAddr)
+	update := make(chan *m2a)
+
+	go updateMacMap(macStr2Addr, update)
+
 	quit := make(chan struct{})
 	for i := 0; i < runtime.NumCPU(); i++ {
-		go handleMqttSNPacket(connection, quit)
+		go handleMqttSNPacket(connection, quit, &macStr2Addr, update)
 	}
 
 	<-quit
