@@ -79,7 +79,7 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, macStr2Addr
 	}
 
 	opts := mqtt.NewClientOptions().
-		AddBroker("tcp://localhost:43518").
+		AddBroker("tcp://localhost:31308").
 		SetClientID(fmt.Sprintf("mqtt-benchmark-%v-%v", time.Now().Format(time.RFC3339Nano), "MQTTSN-Gateway-worker")).
 		SetCleanSession(true).
 		SetAutoReconnect(true).
