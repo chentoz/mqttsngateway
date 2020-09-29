@@ -26,7 +26,7 @@ type m2a struct{
 
 var (
 	rwm     sync.RWMutex
-	macStr2Addr map[string]*net.UDPAddr
+	macStr2Addr map[string]*net.UDPAddr = make(map[string]*net.UDPAddr)
 )
 
 func get(key string) *net.UDPAddr {
