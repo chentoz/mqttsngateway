@@ -9,6 +9,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -23,24 +24,36 @@ type m2a struct{
 	addr *net.UDPAddr
 }
 
-func updateMacMap(macStr2Addr map[string]*net.UDPAddr, update chan *m2a) {
+var (
+	rwm     sync.RWMutex
+	macStr2Addr map[string]*net.UDPAddr
+)
+
+func get(key string) *net.UDPAddr {
+	rwm.RLock()
+	defer rwm.RUnlock()
+	return macStr2Addr[key]
+}
+
+func set(key string, value *net.UDPAddr) {
+	rwm.Lock()
+	defer rwm.Unlock()
+	macStr2Addr[key] = value
+}
+
+func updateMacMap(update chan *m2a) {
 	for {
 		ud := <- update
-		fmt.Println(ud.mac)
-		fmt.Println(ud.addr)
-		macStr2Addr[ud.mac] = ud.addr
+		set(ud.mac, ud.addr)
 	}
 }
 
-func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, macStr2Addr *map[string]*net.UDPAddr, update chan *m2a) {
+func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan *m2a) {
 
 	buffer := make([]byte, 1024)
 	n, remoteAddr, err := 0, new(net.UDPAddr), error(nil)
 
 	var hdrHeartBeat mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message) {
-
-		//hb := &HB.HeartBeat{}
-		//proto.Unmarshal(msg.Payload(), hb)
 
 		msgTypeByte := byte(0x0c)
 		flagByte := byte(0x62)
@@ -60,7 +73,7 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, macStr2Addr
 		copy((packet)[7:], msg.Payload())
 
 		macstring := hex.EncodeToString(msg.Payload()[2 : 2+6])
-		udpAddr := (*macStr2Addr)[macstring]
+		udpAddr := get(macstring)
 
 		_, err = connection.WriteToUDP(buffer[0:n], udpAddr)
 		if err != nil {
@@ -152,14 +165,13 @@ func main() {
 
 	defer connection.Close()
 
-	macStr2Addr := make(map[string]*net.UDPAddr)
 	update := make(chan *m2a)
 
-	go updateMacMap(macStr2Addr, update)
+	go updateMacMap(update)
 
 	quit := make(chan struct{})
 	for i := 0; i < runtime.NumCPU(); i++ {
-		go handleMqttSNPacket(connection, quit, &macStr2Addr, update)
+		go handleMqttSNPacket(connection, quit, update)
 	}
 
 	<-quit
