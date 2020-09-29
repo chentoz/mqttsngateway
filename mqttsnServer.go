@@ -26,11 +26,9 @@ type m2a struct{
 func updateMacMap(macStr2Addr map[string]*net.UDPAddr, update chan *m2a) {
 	for {
 		ud := <- update
-		fmt.Println("-------------------- updateMacMap --------------------")
 		fmt.Println(ud.mac)
 		fmt.Println(ud.addr)
 		macStr2Addr[ud.mac] = ud.addr
-		fmt.Println("-------------------- updateMacMap : End--------------------")
 	}
 }
 
@@ -39,11 +37,8 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, macStr2Addr
 	buffer := make([]byte, 1024)
 	n, remoteAddr, err := 0, new(net.UDPAddr), error(nil)
 
-	// mqtt client for workers
 	var hdrHeartBeat mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message) {
 
-		fmt.Println(" ++++++++++ HeartBeat Ack ++++++++++ ")
-		fmt.Println("Heart Beat Ack got")
 		//hb := &HB.HeartBeat{}
 		//proto.Unmarshal(msg.Payload(), hb)
 
@@ -65,22 +60,18 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, macStr2Addr
 		copy((packet)[7:], msg.Payload())
 
 		macstring := hex.EncodeToString(msg.Payload()[2 : 2+6])
-		fmt.Printf("Mac String %v\n", macstring)
 		udpAddr := (*macStr2Addr)[macstring]
-		fmt.Printf("Udp addr %+v\n", udpAddr)
 
 		_, err = connection.WriteToUDP(buffer[0:n], udpAddr)
-		fmt.Println("Sending back HeartBeat Ack")
 		if err != nil {
 			fmt.Printf("Error when re-sending : %v \n", err.Error())
 			//quit <- struct{}{}
 		}
-		fmt.Println(" ++++++++++ HeartBeat Ack ++++++++++ ")
 	}
 
 	opts := mqtt.NewClientOptions().
 		AddBroker("tcp://localhost:31308").
-		SetClientID(fmt.Sprintf("mqtt-benchmark-%v-%v", time.Now().Format(time.RFC3339Nano), "MQTTSN-Gateway-worker")).
+		SetClientID(fmt.Sprintf("mqtt-benchmark-%v-%v", time.Now().Format(time.RFC3339Nano), "MQTTSN-Gateway-golang")).
 		SetCleanSession(true).
 		SetAutoReconnect(true).
 		SetOnConnectHandler(func(client mqtt.Client) {
@@ -88,12 +79,12 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, macStr2Addr
 				fmt.Println(token.Error())
 				quit <- struct{}{}
 			} else {
-				fmt.Println("Subscribe topic " + "HeartBeatAck" + " success\n")
+				fmt.Println("Subscribe topic HeartBeatAck success")
 			}
 
 		}).
 		SetConnectionLostHandler(func(client mqtt.Client, reason error) {
-			fmt.Printf("CLIENT %v lost connection to the broker: %v. Will reconnect...\n", "MQTTSN-Gateway", reason.Error())
+			fmt.Printf("CLIENT %v lost connection to the broker: %v. Will reconnect...\n", "MQTTSN-Gateway-golang", reason.Error())
 		})
 	client := mqtt.NewClient(opts)
 
@@ -105,11 +96,8 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, macStr2Addr
 	}
 
 	for err == nil {
-		fmt.Println(" ++++++++++ Receiving HeartBeat Ack ++++++++++ ")
 
 		n, remoteAddr, err = connection.ReadFromUDP(buffer)
-
-		fmt.Printf("New message got")
 
 		var topic string
 		if buffer[3] == 0x42 {
@@ -131,21 +119,12 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, macStr2Addr
 		mqttsnMessage := buffer[7:n]
 		macstring := hex.EncodeToString(mqttsnMessage[2 : 2+6])
 
-		fmt.Println("Updating mac address and remote map : \n ")
-		fmt.Println(macstring)
-		fmt.Println(remoteAddr)
-
 		update <- &m2a{macstring, remoteAddr}
-		fmt.Println("Updated mac address and remote map : \n ")
 
-		fmt.Println("Redirecting messages : \n ")
 		token := client.Publish(topic, 0, false, mqttsnMessage)
 		if token.Error() != nil {
 			fmt.Println("CLIENT Error sending message")
 		}
-		fmt.Println("Messages redirected : \n ")
-
-		fmt.Println(" ++++++++++ Receiving HeartBeat Ack : End ++++++++++ ")
 	}
 }
 
