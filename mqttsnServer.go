@@ -113,6 +113,11 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan
 		n, remoteAddr, err = connection.ReadFromUDP(buffer)
 
 		var topic string
+
+		if n < 8 {
+			continue
+		}
+
 		if buffer[3] == 0x42 {
 			topic = "BLELocation"
 		} else if buffer[3] == 0x47 {
