@@ -148,7 +148,7 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan
 
 func main() {
 	arguments := os.Args
-	runtime.GOMAXPROCS(runtime.NumCPU())
+	runtime.GOMAXPROCS(runtime.NumCPU() - 4)
 
 	if len(arguments) == 1 {
 		fmt.Println("Please provide a port number")
@@ -175,7 +175,7 @@ func main() {
 	go updateMacMap(update)
 
 	quit := make(chan struct{})
-	for i := 0; i < runtime.NumCPU(); i++ {
+	for i := 0; i < runtime.NumCPU() - 4; i++ {
 		go handleMqttSNPacket(connection, quit, update)
 	}
 
