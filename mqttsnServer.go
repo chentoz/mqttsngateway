@@ -72,7 +72,7 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan
 		copy((packet)[5:7], midBytes)
 		copy((packet)[7:], msg.Payload())
 
-		macstring := hex.EncodeToString(msg.Payload()[2 : 2+6])
+		macstring := strings.ToUpper(hex.EncodeToString(msg.Payload()[2 : 2+6]))
 		udpAddr := get(macstring)
 
 		_, err = connection.WriteToUDP(buffer[0:n], udpAddr)
