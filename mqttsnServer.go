@@ -135,7 +135,7 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan
 		}
 
 		mqttsnMessage := buffer[7:n]
-		macstring := hex.EncodeToString(mqttsnMessage[2 : 2+6])
+		macstring := strings.ToUpper(hex.EncodeToString(mqttsnMessage[2 : 2+6]))
 
 		fmt.Printf(macstring)
  		if macstring != "EB70ADB01902" {
