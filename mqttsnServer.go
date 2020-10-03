@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"math/rand"
 	"net"
 	"os"
@@ -72,9 +73,12 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan
 		copy((packet)[5:7], midBytes)
 		copy((packet)[7:], msg.Payload())
 
-		macstring := hex.EncodeToString(msg.Payload()[2 : 2+6])
+		macstring := strings.ToUpper(hex.EncodeToString(msg.Payload()[2 : 2+6]))
 		udpAddr := get(macstring)
 
+		if udpAddr == nil {
+			log.Printf("mac string not found : %v", macstring)
+		}
 		_, err = connection.WriteToUDP(buffer[0:n], udpAddr)
 		if err != nil {
 			fmt.Printf("Error when re-sending : %v \n", err.Error())
@@ -135,9 +139,13 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan
 		}
 
 		mqttsnMessage := buffer[7:n]
-		macstring := hex.EncodeToString(mqttsnMessage[2 : 2+6])
+		macstring := strings.ToUpper(hex.EncodeToString(mqttsnMessage[2 : 2+6]))
 
 		update <- &m2a{macstring, remoteAddr}
+
+		if macstring != "EB70ADB01902" {
+			return
+		}
 
 		token := client.Publish(topic, 0, false, mqttsnMessage)
 		if token.Error() != nil {
