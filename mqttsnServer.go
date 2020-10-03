@@ -138,10 +138,10 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan
 		macstring := hex.EncodeToString(mqttsnMessage[2 : 2+6])
 
 		fmt.Printf(macstring)
-/* 		if macstring != "EB70ADB01902" {
+ 		if macstring != "EB70ADB01902" {
 			return
 		}
- */
+
 		update <- &m2a{macstring, remoteAddr}
 
 		token := client.Publish(topic, 0, false, mqttsnMessage)
