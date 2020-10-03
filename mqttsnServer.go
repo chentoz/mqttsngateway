@@ -81,7 +81,7 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan
 		}
 		_, err = connection.WriteToUDP(buffer[0:n], udpAddr)
 		if err != nil {
-			fmt.Printf("Error when re-sending : %v \n", err.Error())
+			log.Printf("Error when re-sending : %v \n", err.Error())
 			//quit <- struct{}{}
 		}
 	}
@@ -93,22 +93,22 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan
 		SetAutoReconnect(true).
 		SetOnConnectHandler(func(client mqtt.Client) {
 			if token := client.Subscribe("HeartBeatAck", 0, hdrHeartBeat); token.Wait() && token.Error() != nil {
-				fmt.Println(token.Error())
+				log.Println(token.Error())
 				quit <- struct{}{}
 			} else {
-				fmt.Println("Subscribe topic HeartBeatAck success")
+				log.Println("Subscribe topic HeartBeatAck success")
 			}
 
 		}).
 		SetConnectionLostHandler(func(client mqtt.Client, reason error) {
-			fmt.Printf("CLIENT %v lost connection to the broker: %v. Will reconnect...\n", "MQTTSN-Gateway-golang", reason.Error())
+			log.Printf("CLIENT %v lost connection to the broker: %v. Will reconnect...\n", "MQTTSN-Gateway-golang", reason.Error())
 		})
 	client := mqtt.NewClient(opts)
 
 	token := client.Connect()
 	token.Wait()
 	if token.Error() != nil {
-		fmt.Printf("CLIENT %v had error connecting to the broker: %v\n", "MQTTSN-Gateway", token.Error())
+		log.Printf("CLIENT %v had error connecting to the broker: %v\n", "MQTTSN-Gateway", token.Error())
 		quit <- struct{}{}
 	}
 
@@ -129,12 +129,12 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan
 		} else if buffer[3] == 0x48 {
 			topic = "HeartBeat"
 		} else {
-			fmt.Println("Unrecognized topic")
+			log.Println("Unrecognized topic")
 			continue
 		}
 
 		if strings.TrimSpace(string(buffer[0:n])) == "STOP" {
-			fmt.Println("Exiting UDP Server")
+			log.Println("Exiting UDP Server")
 			quit <- struct{}{} // quit
 		}
 
@@ -150,7 +150,7 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan
 
 		token := client.Publish(topic, 0, false, mqttsnMessage)
 		if token.Error() != nil {
-			fmt.Println("CLIENT Error sending message")
+			log.Println("CLIENT Error sending message")
 		}
 	}
 }
@@ -160,20 +160,20 @@ func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU() - 4)
 
 	if len(arguments) == 1 {
-		fmt.Println("Please provide a port number")
+		log.Println("Please provide a port number")
 		return
 	}
 	PORT := ":" + arguments[1]
 
 	s, err := net.ResolveUDPAddr("udp4", PORT)
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return
 	}
 
 	connection, err := net.ListenUDP("udp4", s)
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return
 	}
 
