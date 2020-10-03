@@ -76,7 +76,7 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan
 		udpAddr := get(macstring)
 
 		if udpAddr == nil {
-			fmt.Printf("mac string not found: %v ", macstring)
+			fmt.Printf("mac string not found: %v \n", macstring)
 			return
 		}
 
@@ -144,9 +144,9 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan
 		macstring := strings.ToUpper(hex.EncodeToString(mqttsnMessage[2 : 2+6]))
 
 		fmt.Printf(macstring)
- 		if macstring != "EB70ADB01902" {
-			return
-		}
+ 		//if macstring != "EB70ADB01902" {
+			//return
+		//}
 
 		update <- &m2a{macstring, remoteAddr}
 
