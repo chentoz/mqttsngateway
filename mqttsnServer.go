@@ -53,7 +53,7 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan
 	buffer := make([]byte, 1024)
 	n, remoteAddr, err := 0, new(net.UDPAddr), error(nil)
 
-	var hdrHeartBeat mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message) {
+	var hdrHeartBeatAck mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message) {
 
 		msgTypeByte := byte(0x0c)
 		flagByte := byte(0x62)
@@ -75,7 +75,13 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan
 		macstring := strings.ToUpper(hex.EncodeToString(msg.Payload()[2 : 2+6]))
 		udpAddr := get(macstring)
 
+		if udpAddr == nil {
+			fmt.Printf("mac string not found: %v ", macstring)
+			return
+		}
+
 		_, err = connection.WriteToUDP(buffer[0:n], udpAddr)
+
 		if err != nil {
 			fmt.Printf("Error when re-sending : %v \n", err.Error())
 			//quit <- struct{}{}
@@ -88,7 +94,7 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan
 		SetCleanSession(true).
 		SetAutoReconnect(true).
 		SetOnConnectHandler(func(client mqtt.Client) {
-			if token := client.Subscribe("HeartBeatAck", 0, hdrHeartBeat); token.Wait() && token.Error() != nil {
+			if token := client.Subscribe("HeartBeatAck", 0, hdrHeartBeatAck); token.Wait() && token.Error() != nil {
 				fmt.Println(token.Error())
 				quit <- struct{}{}
 			} else {
