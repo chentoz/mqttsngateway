@@ -11,7 +11,7 @@
             "mode": "auto",
             "program": "/home/chentoz/Downloads/go-gateway/",
             "env": {},
-            "args": [31337]
+            "args": ["inport=31337 output=43518 workers=12"]
         }
     ]
 }

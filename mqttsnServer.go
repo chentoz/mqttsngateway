@@ -160,13 +160,13 @@ func main() {
 	maxCores := runtime.GOMAXPROCS(runtime.NumCPU())
 
 	var (
-		inport   = flag.String("In Port", "31337", "MQTTSN packet source port")
-		outport   = flag.String("Out Port", "43518", "MQTT packet destination port")
-		workers   = flag.Int("Worker Threads",  maxCores , "Total Works")
+		inport   = flag.String("inport", "31337", "MQTTSN packet source port")
+		outport   = flag.String("outport", "43518", "MQTT packet destination port")
+		workers   = flag.Int("workers",  maxCores , "Total Works")
 	)
 	flag.Parse()
 
-	s, err := net.ResolveUDPAddr("udp4", *inport)
+	s, err := net.ResolveUDPAddr("udp4", ":" + *inport)
 	if err != nil {
 		log.Println(err)
 		return
