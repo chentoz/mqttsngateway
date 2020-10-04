@@ -3,11 +3,11 @@ package main
 import (
 	"encoding/binary"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"log"
 	"math/rand"
 	"net"
-	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -49,7 +49,7 @@ func updateMacMap(update chan *m2a) {
 	}
 }
 
-func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan *m2a) {
+func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan *m2a, outport *string) {
 
 	buffer := make([]byte, 1024)
 	n, remoteAddr, err := 0, new(net.UDPAddr), error(nil)
@@ -78,16 +78,17 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan
 
 		if udpAddr == nil {
 			log.Printf("mac string not found : %v", macstring)
-		}
-		_, err = connection.WriteToUDP(buffer[0:n], udpAddr)
-		if err != nil {
-			log.Printf("Error when re-sending : %v \n", err.Error())
-			//quit <- struct{}{}
+		} else {
+			_, err = connection.WriteToUDP(buffer[0:n], udpAddr)
+			if err != nil {
+				log.Printf("Error when re-sending : %v \n", err.Error())
+				//quit <- struct{}{}
+			}
 		}
 	}
 
 	opts := mqtt.NewClientOptions().
-		AddBroker("tcp://localhost:31308").
+		AddBroker("tcp://localhost:" + *outport).
 		SetClientID(fmt.Sprintf("mqtt-benchmark-%v-%v", time.Now().Format(time.RFC3339Nano), "MQTTSN-Gateway-golang")).
 		SetCleanSession(true).
 		SetAutoReconnect(true).
@@ -156,16 +157,16 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan
 }
 
 func main() {
-	arguments := os.Args
-	runtime.GOMAXPROCS(runtime.NumCPU() - 4)
+	maxCores := runtime.GOMAXPROCS(runtime.NumCPU())
 
-	if len(arguments) == 1 {
-		log.Println("Please provide a port number")
-		return
-	}
-	PORT := ":" + arguments[1]
+	var (
+		inport   = flag.String("In Port", "31337", "MQTTSN packet source port")
+		outport   = flag.String("Out Port", "43518", "MQTT packet destination port")
+		workers   = flag.Int("Worker Threads",  maxCores , "Total Works")
+	)
+	flag.Parse()
 
-	s, err := net.ResolveUDPAddr("udp4", PORT)
+	s, err := net.ResolveUDPAddr("udp4", *inport)
 	if err != nil {
 		log.Println(err)
 		return
@@ -184,8 +185,14 @@ func main() {
 	go updateMacMap(update)
 
 	quit := make(chan struct{})
-	for i := 0; i < runtime.NumCPU() - 4; i++ {
-		go handleMqttSNPacket(connection, quit, update)
+	actualWorkers := 1
+	if *workers > runtime.NumCPU() {
+		actualWorkers = runtime.NumCPU()
+	} else {
+		actualWorkers = *workers
+	}
+	for i := 0; i < actualWorkers; i++ {
+		go handleMqttSNPacket(connection, quit, update, outport)
 	}
 
 	<-quit
