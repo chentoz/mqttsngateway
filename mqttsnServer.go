@@ -144,14 +144,10 @@ func handleMqttSNPacket(connection *net.UDPConn, quit chan struct{}, update chan
 
 		update <- &m2a{macstring, remoteAddr}
 
-		if macstring == "EB70ADB01902" {
-			log.Printf("Sending : %v\n", macstring)
-			token := client.Publish(topic, 0, false, mqttsnMessage)
-			if token.Error() != nil {
-				log.Println("CLIENT Error sending message")
-			}
-		} else {
-			log.Printf("Skipping : %v\n", macstring)
+		log.Printf("Sending : %v\n", macstring)
+		token := client.Publish(topic, 0, false, mqttsnMessage)
+		if token.Error() != nil {
+			log.Println("CLIENT Error sending message")
 		}
 	}
 }
