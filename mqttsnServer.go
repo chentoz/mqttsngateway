@@ -259,7 +259,8 @@ func processUDPPackets(connection *net.UDPConn, in chan *processDAT, workerID in
 		if bytes.Contains(inADT.payload, head) {
 			hdlcDecode(inADT.payload, inADT.addr, &client, update)
 		} else { // compatible with old devices without HDLC
-			handleMqttSnMessage(inADT.payload, inADT.addr, &client, update)
+			//handleMqttSnMessage(inADT.payload, inADT.addr, &client, update)
+			log.Printf("HDLC header not detected \n")
 		}
 		addQueue(workerID)
 	}
