@@ -27,11 +27,21 @@ type m2a struct {
 	addr *net.UDPAddr
 }
 
+type processDAT struct {
+	payload []byte
+	addr    *net.UDPAddr
+}
+
 var (
 	rwm         sync.RWMutex
+	rwm2        sync.RWMutex
+	queue       []int
 	macStr2Addr map[string]*net.UDPAddr = make(map[string]*net.UDPAddr)
 	appName     string                  = "MQTTSN-Gateway-Golang"
 	appVersion  string
+	inport      *string
+	outport     *string
+	workers     *int
 )
 
 func get(key string) *net.UDPAddr {
@@ -46,7 +56,21 @@ func set(key string, value *net.UDPAddr) {
 	macStr2Addr[key] = value
 }
 
-func updateMacMap(update chan *m2a) {
+func addQueue(id int) {
+	rwm2.Lock()
+	defer rwm2.Unlock()
+	queue = append(queue, id)
+}
+
+func frontQueue() int {
+	rwm2.Lock()
+	defer rwm2.Unlock()
+	var frontID int
+	frontID, queue = queue[0], queue[1:]
+	return frontID
+}
+
+func updateMac2AddrMap(update chan *m2a) {
 	for {
 		ud := <-update
 		set(ud.mac, ud.addr)
@@ -74,7 +98,6 @@ func handleMqttSnMessage(message []byte, rinfo *net.UDPAddr, client *mqtt.Client
 
 	if strings.TrimSpace(string(message)) == "STOP" {
 		log.Printf("Exiting %v via STOP command\n", appName)
-		//quit <- struct{}{} // quit
 		return errors.New("Exiting via STOp command")
 	}
 	mqttsnMessage := message[7:n]
@@ -152,9 +175,21 @@ func hdlcEncode(message []byte) []byte {
 	return encodedFrame[0:targetIdx]
 }
 
-func processUDPPackets(connection *net.UDPConn, quit chan struct{}, update chan *m2a, outport *string) {
+func dispatchUDPPackets(connection *net.UDPConn, dataChannels []chan *processDAT) {
 
-	n, remoteAddr, err := 0, new(net.UDPAddr), error(nil)
+	buffer := make([]byte, 4096)
+
+	for { // todo : libev
+		n, remoteAddr, err := connection.ReadFromUDP(buffer)
+		if err == nil {
+			dataChannels[frontQueue()] <- &processDAT{buffer[0:n], remoteAddr}
+		} else {
+			log.Printf("%v reading udp packets error : %v", appName, err.Error())
+		}
+	}
+}
+
+func processUDPPackets(connection *net.UDPConn, in chan *processDAT, workerID int, update chan *m2a) {
 
 	var hdrHeartBeatAck mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message) {
 
@@ -187,7 +222,6 @@ func processUDPPackets(connection *net.UDPConn, quit chan struct{}, update chan 
 			_, err := connection.WriteToUDP(frame, udpAddr)
 			if err != nil {
 				log.Printf("Error when re-sending : %v \n", err.Error())
-				//quit <- struct{}{}
 			}
 		}
 	}
@@ -200,11 +234,9 @@ func processUDPPackets(connection *net.UDPConn, quit chan struct{}, update chan 
 		SetOnConnectHandler(func(client mqtt.Client) {
 			if token := client.Subscribe("HeartBeatAck", 0, hdrHeartBeatAck); token.Wait() && token.Error() != nil {
 				log.Println(token.Error())
-				quit <- struct{}{}
 			} else {
 				log.Println("Subscribe topic HeartBeatAck success")
 			}
-
 		}).
 		SetConnectionLostHandler(func(client mqtt.Client, reason error) {
 			log.Printf("CLIENT %v lost connection to the broker: %v. Will reconnect...\n", appName, reason.Error())
@@ -216,21 +248,20 @@ func processUDPPackets(connection *net.UDPConn, quit chan struct{}, update chan 
 	token.Wait()
 	if token.Error() != nil {
 		log.Printf("CLIENT %v had error connecting to the broker: %v\n", appName, token.Error())
-		quit <- struct{}{}
+		return
 	}
 
-	buffer := make([]byte, 4096)
+	head := make([]byte, 1)
+	head[0] = 0x7e
 
-	for err == nil {
-		n, remoteAddr, err = connection.ReadFromUDP(buffer)
-
-		head := make([]byte, 1)
-		head[0] = 0x7e
-		if bytes.Contains(buffer[0:n], head) {
-			hdlcDecode(buffer[0:n], remoteAddr, &client, update)
+	select {
+	case inADT := <-in:
+		if bytes.Contains(inADT.payload, head) {
+			hdlcDecode(inADT.payload, inADT.addr, &client, update)
 		} else { // compatible with old devices without HDLC
-			handleMqttSnMessage(buffer[0:n], remoteAddr, &client, update)
+			handleMqttSnMessage(inADT.payload, inADT.addr, &client, update)
 		}
+		addQueue(workerID)
 	}
 }
 
@@ -239,11 +270,10 @@ func main() {
 
 	maxCores := runtime.GOMAXPROCS(runtime.NumCPU())
 
-	var (
-		inport  = flag.String("inport", "31337", "MQTTSN packet source port")
-		outport = flag.String("outport", "43518", "MQTT packet destination port")
-		workers = flag.Int("workers", maxCores, "Total Works")
-	)
+	inport = flag.String("inport", "31337", "MQTTSN packet source port")
+	outport = flag.String("outport", "43518", "MQTT packet destination port")
+	workers = flag.Int("workers", maxCores, "Total Works")
+
 	flag.Parse()
 
 	s, err := net.ResolveUDPAddr("udp4", ":"+*inport)
@@ -261,10 +291,7 @@ func main() {
 	defer connection.Close()
 
 	update := make(chan *m2a)
-
-	go updateMacMap(update)
-
-	quit := make(chan struct{})
+	go updateMac2AddrMap(update)
 
 	actualWorkers := 1
 	if *workers > runtime.NumCPU() {
@@ -272,9 +299,24 @@ func main() {
 	} else {
 		actualWorkers = *workers
 	}
-	for i := 0; i < actualWorkers; i++ {
-		go processUDPPackets(connection, quit, update, outport)
+
+	channels := make([]chan *processDAT, actualWorkers)
+
+	queue = make([]int, actualWorkers)
+	for i := range queue {
+		queue[i] = i
 	}
 
+	for i := 0; i < actualWorkers; i++ {
+		channels[i] = make(chan *processDAT)
+	}
+
+	go dispatchUDPPackets(connection, channels)
+
+	for i := 0; i < actualWorkers; i++ {
+		go processUDPPackets(connection, channels[i], i, update)
+	}
+
+	quit := make(chan struct{})
 	<-quit
 }
