@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -21,15 +22,16 @@ func random(min, max int) int {
 	return rand.Intn(max-min) + min
 }
 
-type m2a struct{
-	mac string
+type m2a struct {
+	mac  string
 	addr *net.UDPAddr
 }
 
 var (
-	rwm     sync.RWMutex
+	rwm         sync.RWMutex
 	macStr2Addr map[string]*net.UDPAddr = make(map[string]*net.UDPAddr)
-	appName string = "MQTTSN-Gateway-Golang"
+	appName     string                  = "MQTTSN-Gateway-Golang"
+	appVersion  string
 )
 
 func get(key string) *net.UDPAddr {
@@ -46,12 +48,12 @@ func set(key string, value *net.UDPAddr) {
 
 func updateMacMap(update chan *m2a) {
 	for {
-		ud := <- update
+		ud := <-update
 		set(ud.mac, ud.addr)
 	}
 }
 
-func handleMqttSnMessage(message []byte , rinfo *net.UDPAddr, client *mqtt.Client, update chan *m2a) error {
+func handleMqttSnMessage(message []byte, rinfo *net.UDPAddr, client *mqtt.Client, update chan *m2a) error {
 
 	var topic string
 	n := len(message)
@@ -71,25 +73,25 @@ func handleMqttSnMessage(message []byte , rinfo *net.UDPAddr, client *mqtt.Clien
 	}
 
 	if strings.TrimSpace(string(message)) == "STOP" {
-		log.Println("Exiting UDP Server")
+		log.Printf("Exiting %v via STOP command\n", appName)
 		//quit <- struct{}{} // quit
-		return errors.New("Exiting Server")
+		return errors.New("Exiting via STOp command")
 	}
 	mqttsnMessage := message[7:n]
 
 	macstring := strings.ToUpper(hex.EncodeToString(mqttsnMessage[2 : 2+6]))
 	update <- &m2a{macstring, rinfo}
 
-	log.Printf("%v sending : %v\n",appName, macstring)
+	log.Printf("%v redirecting : %v\n", appName, macstring)
 	token := (*client).Publish(topic, 0, false, mqttsnMessage)
 	if token.Error() != nil {
-		log.Printf("%v : error sending message : %v \n", appName, token.Error())
+		log.Printf("%v : error sending message from %v : %v \n", appName, macstring, token.Error())
 		return token.Error()
 	}
 	return nil
 }
 
-func hdlcDecode(message []byte, rinfo *net.UDPAddr, client *mqtt.Client, update chan *m2a){
+func hdlcDecode(message []byte, rinfo *net.UDPAddr, client *mqtt.Client, update chan *m2a) {
 	state := 0
 	targetIdx := 0
 	msgLen := len(message)
@@ -111,43 +113,43 @@ func hdlcDecode(message []byte, rinfo *net.UDPAddr, client *mqtt.Client, update 
 				state = 0
 				targetIdx = 0
 			}
-		} else if message[i] == 0x7d && i + 1 < msgLen {
-			if message[i + 1] == 0x5e {
-				frame[targetIdx], targetIdx = 0x7e, targetIdx + 1
+		} else if message[i] == 0x7d && i+1 < msgLen {
+			if message[i+1] == 0x5e {
+				frame[targetIdx], targetIdx = 0x7e, targetIdx+1
 				i = i + 1
-			} else if message[i + 1] == 0x5d {
-				frame[targetIdx], targetIdx = 0x7d, targetIdx + 1
+			} else if message[i+1] == 0x5d {
+				frame[targetIdx], targetIdx = 0x7d, targetIdx+1
 				i = i + 1
 			} else {
-				frame[targetIdx], targetIdx = message[i], targetIdx + 1
+				frame[targetIdx], targetIdx = message[i], targetIdx+1
 			}
 		} else {
-			frame[targetIdx], targetIdx = message[i], targetIdx + 1
+			frame[targetIdx], targetIdx = message[i], targetIdx+1
 		}
 		log.Printf("************************************\n Total Packets : %v\n ************************************ \n", totalPacket)
 	}
 }
 
-func hdlcEncode(message []byte) []byte{
+func hdlcEncode(message []byte) []byte {
 	msgLength := len(message)
-	encodedFrame := make([]byte, msgLength)
+	encodedFrame := make([]byte, msgLength*2)
 	encodedFrame[0] = 0x7e
 	targetIdx := 1
 	for srcIdx := 0; srcIdx < msgLength; srcIdx++ {
 		if message[srcIdx] == 0x7e {
 			encodedFrame[targetIdx] = 0x7d
-			targetIdx, encodedFrame[targetIdx] = targetIdx + 1, 0x5e
+			targetIdx, encodedFrame[targetIdx] = targetIdx+1, 0x5e
 			targetIdx++
 		} else if message[srcIdx] == 0x7d {
 			encodedFrame[targetIdx] = 0x7d
-			targetIdx, encodedFrame[targetIdx] = targetIdx +1, 0x5d
+			targetIdx, encodedFrame[targetIdx] = targetIdx+1, 0x5d
 			targetIdx++
 		} else {
-			encodedFrame[targetIdx], targetIdx = message[srcIdx], targetIdx + 1
+			encodedFrame[targetIdx], targetIdx = message[srcIdx], targetIdx+1
 		}
 	}
-	encodedFrame[targetIdx], targetIdx = 0x7e, targetIdx +1
-	return encodedFrame[0: targetIdx]
+	encodedFrame[targetIdx], targetIdx = 0x7e, targetIdx+1
+	return encodedFrame[0:targetIdx]
 }
 
 func processUDPPackets(connection *net.UDPConn, quit chan struct{}, update chan *m2a, outport *string) {
@@ -176,10 +178,11 @@ func processUDPPackets(connection *net.UDPConn, quit chan struct{}, update chan 
 		macstring := strings.ToUpper(hex.EncodeToString(msg.Payload()[2 : 2+6]))
 		udpAddr := get(macstring)
 
+		log.Printf("%v receive HeartBeat Ack from : %v \n", appName, macstring)
 		frame := hdlcEncode(msg.Payload())
 
 		if udpAddr == nil {
-			log.Printf("mac string not found : %v", macstring)
+			log.Printf("mac string not found : %v \n", macstring)
 		} else {
 			_, err := connection.WriteToUDP(frame, udpAddr)
 			if err != nil {
@@ -217,24 +220,33 @@ func processUDPPackets(connection *net.UDPConn, quit chan struct{}, update chan 
 	}
 
 	buffer := make([]byte, 4096)
+
 	for err == nil {
 		n, remoteAddr, err = connection.ReadFromUDP(buffer)
 
-		hdlcDecode(buffer[0:n], remoteAddr, &client, update)
+		head := make([]byte, 1)
+		head[0] = 0x7e
+		if bytes.Contains(buffer[0:n], head) {
+			hdlcDecode(buffer[0:n], remoteAddr, &client, update)
+		} else { // compatible with old devices without HDLC
+			handleMqttSnMessage(buffer[0:n], remoteAddr, &client, update)
+		}
 	}
 }
 
 func main() {
+	log.Printf("***************************\n %v version : %v \n***************************\n ", appName, appVersion)
+
 	maxCores := runtime.GOMAXPROCS(runtime.NumCPU())
 
 	var (
-		inport   = flag.String("inport", "31337", "MQTTSN packet source port")
-		outport   = flag.String("outport", "43518", "MQTT packet destination port")
-		workers   = flag.Int("workers",  maxCores , "Total Works")
+		inport  = flag.String("inport", "31337", "MQTTSN packet source port")
+		outport = flag.String("outport", "43518", "MQTT packet destination port")
+		workers = flag.Int("workers", maxCores, "Total Works")
 	)
 	flag.Parse()
 
-	s, err := net.ResolveUDPAddr("udp4", ":" + *inport)
+	s, err := net.ResolveUDPAddr("udp4", ":"+*inport)
 	if err != nil {
 		log.Println(err)
 		return
