@@ -179,7 +179,7 @@ func dispatchUDPPackets(connection *net.UDPConn, dataChannels []chan *processDAT
 
 	buffer := make([]byte, 4096)
 
-	for { // todo : libev
+	for {
 		n, remoteAddr, err := connection.ReadFromUDP(buffer)
 		if err == nil {
 			dataChannels[frontQueue()] <- &processDAT{buffer[0:n], remoteAddr}
@@ -214,7 +214,7 @@ func processUDPPackets(connection *net.UDPConn, in chan *processDAT, workerID in
 		udpAddr := get(macstring)
 
 		log.Printf("%v receive HeartBeat Ack from : %v \n", appName, macstring)
-		frame := hdlcEncode(msg.Payload())
+		frame := hdlcEncode(packet)
 
 		if udpAddr == nil {
 			log.Printf("mac string not found : %v \n", macstring)
