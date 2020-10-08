@@ -161,17 +161,19 @@ func hdlcEncode(message []byte) []byte {
 	for srcIdx := 0; srcIdx < msgLength; srcIdx++ {
 		if message[srcIdx] == 0x7e {
 			encodedFrame[targetIdx] = 0x7d
-			targetIdx, encodedFrame[targetIdx] = targetIdx+1, 0x5e
 			targetIdx++
+			encodedFrame[targetIdx] = 0x5e
 		} else if message[srcIdx] == 0x7d {
 			encodedFrame[targetIdx] = 0x7d
-			targetIdx, encodedFrame[targetIdx] = targetIdx+1, 0x5d
 			targetIdx++
+			encodedFrame[targetIdx] = 0x5d
 		} else {
-			encodedFrame[targetIdx], targetIdx = message[srcIdx], targetIdx+1
+			encodedFrame[targetIdx] = message[srcIdx]
 		}
+		targetIdx++
 	}
-	encodedFrame[targetIdx], targetIdx = 0x7e, targetIdx+1
+	encodedFrame[targetIdx] = 0x7e
+	targetIdx++
 	return encodedFrame[0:targetIdx]
 }
 
@@ -199,7 +201,7 @@ func processUDPPackets(connection *net.UDPConn, in chan *processDAT, workerID in
 		tidBytes[0] = byte('H')
 		tidBytes[1] = byte('B')
 		midBytes := make([]byte, 2)
-		binary.BigEndian.PutUint16(midBytes, 0x0b00)
+		binary.BigEndian.PutUint16(midBytes, 0x0000)
 		lenByte := byte(1 + 1 + 1 + 2 + 2 + binary.Size(msg.Payload()))
 
 		packet := make([]byte, lenByte)
