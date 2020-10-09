@@ -32,6 +32,12 @@ type processDAT struct {
 	addr    *net.UDPAddr
 }
 
+type processMqtt struct {
+	payload []byte
+	topic string
+	macstring string
+}
+
 var (
 	rwm         sync.RWMutex
 	rwm2        sync.RWMutex
@@ -77,13 +83,13 @@ func updateMac2AddrMap(update chan *m2a) {
 	}
 }
 
-func handleMqttSnMessage(message []byte, rinfo *net.UDPAddr, client *mqtt.Client, update chan *m2a) error {
+func processMqttSnMessage(message []byte, rinfo *net.UDPAddr, update chan *m2a) (*processMqtt, error) {
 
 	var topic string
 	n := len(message)
 
 	if n < 8 {
-		return errors.New("Insufficient data length for a mqttsn messager")
+		return nil, errors.New("Insufficient data length for a mqttsn messager")
 	}
 
 	if message[3] == 0x42 {
@@ -93,28 +99,18 @@ func handleMqttSnMessage(message []byte, rinfo *net.UDPAddr, client *mqtt.Client
 	} else if message[3] == 0x48 {
 		topic = "HeartBeat"
 	} else {
-		return errors.New("Unrecognized topic")
+		return nil, errors.New("Unrecognized topic")
 	}
 
-	if strings.TrimSpace(string(message)) == "STOP" {
-		log.Printf("Exiting %v via STOP command\n", appName)
-		return errors.New("Exiting via STOp command")
-	}
 	mqttsnMessage := message[7:n]
 
 	macstring := strings.ToUpper(hex.EncodeToString(mqttsnMessage[2 : 2+6]))
 	update <- &m2a{macstring, rinfo}
 
-	log.Printf("%v redirecting : %v\n", appName, macstring)
-	token := (*client).Publish(topic, 0, false, mqttsnMessage)
-	if token.Error() != nil {
-		log.Printf("%v : error sending message from %v : %v \n", appName, macstring, token.Error())
-		return token.Error()
-	}
-	return nil
+	return &processMqtt{mqttsnMessage, topic, macstring}, nil
 }
 
-func hdlcDecode(message []byte, rinfo *net.UDPAddr, client *mqtt.Client, update chan *m2a) {
+func hdlcDecode(message []byte, rinfo *net.UDPAddr, update chan *m2a) {
 	state := 0
 	targetIdx := 0
 	msgLen := len(message)
@@ -128,7 +124,7 @@ func hdlcDecode(message []byte, rinfo *net.UDPAddr, client *mqtt.Client, update 
 				continue
 			} else if state == 1 {
 				totalPacket++
-				err := handleMqttSnMessage(frame[0:targetIdx], rinfo, client, update)
+				err := processMqttSnMessage(frame[0:targetIdx], rinfo, update)
 				if err == nil {
 					log.Printf("Handling frame : %v ", frame)
 				}
@@ -177,72 +173,53 @@ func hdlcEncode(message []byte) []byte {
 	return encodedFrame[0:targetIdx]
 }
 
-func dispatchUDPPackets(connection *net.UDPConn, dataChannels []chan *processDAT) {
+func dispatchUDPPackets(connection *net.UDPConn, outChannels []chan *processDAT) {
 
 	buffer := make([]byte, 4096)
 
 	for {
 		n, remoteAddr, err := connection.ReadFromUDP(buffer)
 		if err == nil {
-			dataChannels[frontQueue()] <- &processDAT{buffer[0:n], remoteAddr}
+			outChannels[frontQueue()] <- &processDAT{buffer[0:n], remoteAddr}
 		} else {
 			log.Printf("%v reading udp packets error : %v", appName, err.Error())
 		}
 	}
 }
 
-func processUDPPackets(connection *net.UDPConn, in chan *processDAT, workerID int, update chan *m2a) {
+func sendUDPPackets(connection *net.UDPConn, in chan *processDAT) {
 
-	var hdrHeartBeatAck mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message) {
-
-		msgTypeByte := byte(0x0c)
-		flagByte := byte(0x62)
-		tidBytes := make([]byte, 2)
-		tidBytes[0] = byte('H')
-		tidBytes[1] = byte('B')
-		midBytes := make([]byte, 2)
-		binary.BigEndian.PutUint16(midBytes, 0x0000)
-		lenByte := byte(1 + 1 + 1 + 2 + 2 + binary.Size(msg.Payload()))
-
-		packet := make([]byte, lenByte)
-		(packet)[0] = lenByte
-		(packet)[1] = msgTypeByte
-		(packet)[2] = flagByte
-		copy((packet)[3:5], tidBytes)
-		copy((packet)[5:7], midBytes)
-		copy((packet)[7:], msg.Payload())
-
-		macstring := strings.ToUpper(hex.EncodeToString(msg.Payload()[2 : 2+6]))
-		udpAddr := get(macstring)
-
-		log.Printf("%v receive HeartBeat Ack from : %v \n", appName, macstring)
-		frame := hdlcEncode(packet)
-
-		if udpAddr == nil {
-			log.Printf("mac string not found : %v \n", macstring)
-		} else {
-			_, err := connection.WriteToUDP(frame, udpAddr)
-			if err != nil {
-				log.Printf("Error when re-sending : %v \n", err.Error())
-			}
+	select {
+	case inADT := <- in:
+		_, err := connection.WriteToUDP(inADT.payload, inADT.addr)
+		if err != nil {
+			log.Printf("Error when sending udp packets : %v \n", err.Error())
 		}
+	}
+}
+
+func dispatchMqttEvents(outChannels []chan *processDAT, in chan *processMqtt) {
+
+	// use event handler to process HeartBeatAck events
+	var hdrHeartBeatAck mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message){
+		outChannels[frontQueue()] <- &processDAT{msg.Payload(), nil}
 	}
 
 	opts := mqtt.NewClientOptions().
-		AddBroker("tcp://localhost:" + *outport).
-		SetClientID(fmt.Sprintf("%v-%v-%v", appName, time.Now().Format(time.RFC3339Nano), "")).
-		SetCleanSession(true).
-		SetAutoReconnect(true).
-		SetOnConnectHandler(func(client mqtt.Client) {
-			if token := client.Subscribe("HeartBeatAck", 0, hdrHeartBeatAck); token.Wait() && token.Error() != nil {
-				log.Println(token.Error())
-			} else {
-				log.Println("Subscribe topic HeartBeatAck success")
-			}
-		}).
-		SetConnectionLostHandler(func(client mqtt.Client, reason error) {
-			log.Printf("CLIENT %v lost connection to the broker: %v. Will reconnect...\n", appName, reason.Error())
-		})
+	AddBroker("tcp://localhost:" + *outport).
+	SetClientID(fmt.Sprintf("%v-%v-%v", appName, time.Now().Format(time.RFC3339Nano), "")).
+	SetCleanSession(true).
+	SetAutoReconnect(true).
+	SetOnConnectHandler(func(client mqtt.Client) {
+		if token := client.Subscribe("HeartBeatAck", 0, hdrHeartBeatAck); token.Wait() && token.Error() != nil {
+			log.Println(token.Error())
+		} else {
+			log.Println("Subscribe topic HeartBeatAck success")
+		}
+	}).
+	SetConnectionLostHandler(func(client mqtt.Client, reason error) {
+		log.Printf("CLIENT %v lost connection to the broker: %v. Will reconnect...\n", appName, reason.Error())
+	})
 
 	client := mqtt.NewClient(opts)
 
@@ -252,6 +229,54 @@ func processUDPPackets(connection *net.UDPConn, in chan *processDAT, workerID in
 		log.Printf("CLIENT %v had error connecting to the broker: %v\n", appName, token.Error())
 		return
 	}
+
+	select {
+	case inADT := <- in:
+		log.Printf("%v redirecting : %v\n", appName, inADT.macstring)
+
+		token := client.Publish(inADT.topic, 0, false, inADT.payload)
+		if token.Error() != nil {
+			log.Printf("%v : error sending message from %v : %v \n", appName, inADT.macstring, token.Error())
+		}
+	}
+}
+
+func processMqttMessages( in chan *processDAT, out chan *processMqtt, workerID int){
+
+	select {
+	case pDAT := <-in:
+		msgTypeByte := byte(0x0c)
+		flagByte := byte(0x62)
+		tidBytes := make([]byte, 2)
+		tidBytes[0] = byte('H')
+		tidBytes[1] = byte('B')
+		midBytes := make([]byte, 2)
+		binary.BigEndian.PutUint16(midBytes, 0x0000)
+		lenByte := byte(1 + 1 + 1 + 2 + 2 + binary.Size(pDAT.payload))
+
+		packet := make([]byte, lenByte)
+		(packet)[0] = lenByte
+		(packet)[1] = msgTypeByte
+		(packet)[2] = flagByte
+		copy((packet)[3:5], tidBytes)
+		copy((packet)[5:7], midBytes)
+		copy((packet)[7:], pDAT.payload)
+
+		macstring := strings.ToUpper(hex.EncodeToString(pDAT.payload[2 : 2+6]))
+		udpAddr := get(macstring)
+
+		log.Printf("%v receive HeartBeat Ack from : %v \n", appName, macstring)
+		frame := hdlcEncode(packet)
+
+		if udpAddr == nil {
+			log.Printf("mac not found : %v \n", macstring)
+		} else {
+			out <- &processMqtt{frame, topic, macstring}
+		}
+	}
+}
+
+func processUDPPackets(in chan *processDAT, workerID int, update chan *m2a) {
 
 	head := make([]byte, 1)
 	head[0] = 0x7e
