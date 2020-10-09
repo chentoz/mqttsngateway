@@ -269,7 +269,7 @@ func processUDPPackets(connection *net.UDPConn, in chan *processDAT, workerID in
 }
 
 func main() {
-	log.Printf("***************************\n %v version : %v \n***************************\n ", appName, appVersion)
+	log.Printf("\n***************************\n %v version : %v \n***************************\n ", appName, appVersion)
 
 	maxCores := runtime.GOMAXPROCS(runtime.NumCPU())
 
