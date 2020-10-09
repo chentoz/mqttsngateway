@@ -32,6 +32,10 @@ type processDAT struct {
 	addr    *net.UDPAddr
 }
 
+type processQueue struct {
+	id int
+}
+
 var (
 	rwm         sync.RWMutex
 	rwm2        sync.RWMutex
@@ -59,15 +63,14 @@ func set(key string, value *net.UDPAddr) {
 func addQueue(id int) {
 	rwm2.Lock()
 	defer rwm2.Unlock()
+	log.Printf("add  %v \n", queue)
 	queue = append(queue, id)
 }
 
 func frontQueue() int {
-	rwm2.Lock()
-	defer rwm2.Unlock()
-	var frontID int
-	frontID, queue = queue[0], queue[1:]
-	return frontID
+	rwm2.RLock()
+	defer rwm2.RUnlock()
+	return queue[0]
 }
 
 func updateMac2AddrMap(update chan *m2a) {
