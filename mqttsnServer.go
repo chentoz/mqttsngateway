@@ -204,7 +204,7 @@ func processUDPPackets(connection *net.UDPConn, in chan *processDAT, workerID in
 		tidBytes[0] = byte('H')
 		tidBytes[1] = byte('B')
 		midBytes := make([]byte, 2)
-		binary.BigEndian.PutUint16(midBytes, 0x0000)
+		binary.BigEndian.PutUint16(midBytes, 0x0000) // yxchen : alias with Hardware team
 		lenByte := byte(1 + 1 + 1 + 2 + 2 + binary.Size(msg.Payload()))
 
 		packet := make([]byte, lenByte)
